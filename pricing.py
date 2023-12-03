@@ -10,6 +10,10 @@ from gurobipy import *
 
 
 def generate(env, SP_instance, feasible_bundles, nbr_bundles):
+    """
+    Generate a set of at most {nbr_bundles} bundles using the weighted max packing algorithm
+    Return: list of bundles
+    """
     m = Model("weighted_max_packing", env=env)
 
     # Decision variables
@@ -35,6 +39,7 @@ def generate(env, SP_instance, feasible_bundles, nbr_bundles):
 
     m.optimize()
 
+    # Select bundles using the solution of the MILP
     selected_bundles = []
     for b in feasible_bundles:
       if x[b].x > .5:
@@ -44,7 +49,10 @@ def generate(env, SP_instance, feasible_bundles, nbr_bundles):
 
 reverse_market_mappings = {"SanAntonio": "TX_ANT", "Austin": "TX_AUS", "Dallas": "TX_DAL", "Houston": "TX_HOU"}
 
+
+
 class StaticPricing:
+    
     def __init__(self,
           loads,
           arrival_rate_per_market,
@@ -90,6 +98,9 @@ class StaticPricing:
             self.__update_marginal_costs(market, initial_time)
 
     def get_raw_utlility(self, b, dist_to_pickup):
+        """
+        Return the raw utility of a bundle i.e. the utilty excluding price related components (price and price x distance)
+        """
         utility = \
                 (dist_to_pickup+b.em) * self.params["Deadhead"]\
             +   np.log((dist_to_pickup+b.em)/100) * self.params["log(deadhead)"]\
@@ -106,7 +117,12 @@ class StaticPricing:
         utility += load_orig[reverse_market_mappings[b.loads[0].org_market]]
         return utility
 
-    def get_prices(self, B, session, nbr_display, homogeneous_prices = False):   
+    def get_prices(self, B, session, nbr_display, homogeneous_prices = False):
+        """
+        Return the optimal prices of the best {nbr_display} bundles for session {session}, selected among the set of bundles {B}
+        [{homogeneous_prices} = True] to make prices indepent of the session's location
+        """
+        
         if self.approx>0:
           self.__update_marginal_costs(session.market, session.time)
 
@@ -141,6 +157,9 @@ class StaticPricing:
           self.__update_marginal_costs(market, current_time)
 
     def __update_marginal_costs(self, market, current_time):
+        """
+        Update the marginal costs of market {market} using approximation {self.approx}
+        """
         self.marginal_costs[market] = dict()
         loads = self.loads_by_market[market]
         arrival_rate = self.arrival_rate_per_market[market]
@@ -180,7 +199,7 @@ class StaticPricing:
           T=T[1:]
         proba_failure = {l.id: 1 for l in L}
 
-        u = {l.id: np.exp(self.get_raw_utlility(Bundle([l]), self.avg_dist_to_pickup[l.org_market]) + self.beta_2*self.avg_prices[l.org_market][l.dst_market]) for l in L}
+        u = {l.id: np.exp(self.get_raw_utlility(Bundle([l]), self.avg_dist_to_pickup[l.org_market]) + (self.params["Price"]+l.d/100*self.params["Price x Distance"]/100)*self.avg_prices[l.org_market][l.dst_market]) for l in L}
         for t in list(range(len(T))[-2::-1]):  
             I = [l for l in L if l.pickup_TW.y>T[t]] # unexpired loads
             ut = {l.id: u[l.id] for l in I}
