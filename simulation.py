@@ -11,6 +11,8 @@ import warnings
 import time
 from statistics import mean
 
+file_path = ""
+
 from uber_formulation import uber_generate_bundles, generate_2_3_bundles
 from carriers import Carriers, analyze_sessions, str_to_time, get_frequency_distribution
 from pricing import StaticPricing, generate
@@ -30,8 +32,6 @@ AVG_SPEED = 40 #mph
 LOAD_TIME = 2 #hours, also try 1/2
 UNLOAD_TIME = 2 #hours
 MAX_IDLE_TIME = 10 #hours
-
-file_path = ""
 
 low_prices = {
     "TX_ANT": {"TX_ANT": 230, "TX_AUS": 350, "TX_DAL": 740, "TX_HOU": 540},
@@ -72,7 +72,8 @@ def getMYD(d):
     return datetime(d.year, d.month, d.day)
 
 def hours_from_start(t):
-    return math.floor((t - carrier_start).total_seconds()/60/60)
+    # return math.floor((t - carrier_start).total_seconds()/60/60)
+    return (t - carrier_start).total_seconds()/60/60
 
 def get_uber_avg(org_market, dest_market):
     if org_market == "TX_FTW":
@@ -152,7 +153,6 @@ def get_deliveries(num_loads, penalty_ratio = 2, show_plot = False):
         plt.show()
     dates = sorted(list(all_days))
 
-    print(intra / (inter + intra), inter + intra, len(valid_deliveries))
     return valid_deliveries
 
 def find_avg_distance(carriers, loads):
@@ -184,6 +184,9 @@ def calculate_price(bundle_info, pricing_alg):
             market_price += max(10, low_prices[startingMarket][endingMarket] - (high_prices[startingMarket][endingMarket] - low_prices[startingMarket][endingMarket])/2)
         elif pricing_alg == "uber_avg":
             market_price += (low_prices[startingMarket][endingMarket] + high_prices[startingMarket][endingMarket])/2
+        elif "uber_avg" in pricing_alg:
+            ratio = int(pricing_alg.split("_")[2])
+            market_price += ((low_prices[startingMarket][endingMarket] + high_prices[startingMarket][endingMarket])/2 * ratio)
         elif pricing_alg == "uber_high":
             market_price += high_prices[startingMarket][endingMarket] + (high_prices[startingMarket][endingMarket] - low_prices[startingMarket][endingMarket])/2
         elif pricing_alg == "zero_all":
@@ -279,7 +282,7 @@ def choose_bundle(utilities, all_bundles, params, p_reject, nbr_display):
 
     prob_sum = sum(normalized_utilities) - normalized_utilities[-1]
     prob_len = len(normalized_utilities)-1
-    
+
     chosen_idx = np.random.choice(range(len(displayed_idxs)), p=normalized_utilities)
     chosen_bundle_idx = displayed_idxs[chosen_idx]
     return chosen_bundle_idx, prob_sum, prob_len
@@ -325,7 +328,6 @@ def simulate_new2(n_carriers, sessions, valid_deliveries, bundle_generation, pri
             bundles.append(Bundle([loads[i]]))
     else:
         raise Exception("Bundle generation type " + bundle_generation + " not defined")
-
     price_per_mile_per_lane = copy.deepcopy(p_m_dict)
     price_per_mile, interm_price_per_mile = [], []
     avg_prices = []
@@ -529,17 +531,14 @@ def plot_line_scatter(x, y, title, x_lab, y_lab, colors, labels):
     plt.title(title)
     plt.show()
 
-def get_labels_colors(len_algs, ratio):
-    if len_algs in [5, 6, 7]:
-        prices = [0, .25, .5, .75, 1]
-        xlabels = ["0", "low", "avg", "high", str(price_max)]
-        if len_algs == 6:
-            prices = [0, .25, .5, .75, 1, 1.25]
-            xlabels = ["0", "low", "avg", "high", str(price_max), "dp_alg"]
-        elif len_algs == 7:
-            prices = [0, .25, .5, .75, 1, 1.25, 1.50]
-            xlabels = ["0", "low", "avg", "high", str(price_max), "dp_alg 1", "dp_alg 2"]
+def get_labels_colors(all_algs, ratio):
+    xlabels = all_algs
+    if "max_all" in xlabels:
+        max_id = xlabels.index("max_all")
+        xlabels[max_id] = str(price_max)
+    prices = list(np.arange(0, len(all_algs) * .25, .25))
 
+    if len(all_algs) in [5, 6, 7]:
         colors = ["r", "g", "b", "c", "y", "gray", "purple"]
         p_ratios, x_ratios, c_ratios = [], [], []
         for i in range(len(prices)):
@@ -563,8 +562,11 @@ def run_and_plot(bundle_gen_ops, pricing_algs, num_loads, carriers_ratio, choice
     mean_s_prob, mean_b_prob, mean_prob, mean_sum, all_costs, all_avg_lens, all_p_m = [], [], [], [], [], [], []
     num_runs = 5
     c_class = Carriers(carrier_start, loads_start, loads_end, carrier_start_time_uniform, num_carriers)
+    for k in choice_model_params.keys():
+        if k == "Price" or k == "Distance" or k == "Deadhead":
+            choice_model_params[k] = choice_model_params[k]/100
+            
     p_impressions = get_frequency_distribution("impressions_per_session.csv", 185)
-    
     if "Price x Distance" not in choice_model_params:
         choice_model_params["Price x Distance"] = 0
     if "Distance^2" not in choice_model_params:
@@ -583,8 +585,6 @@ def run_and_plot(bundle_gen_ops, pricing_algs, num_loads, carriers_ratio, choice
                         new_r_params[choice] = choice_model_params[choice] * br
                     else:
                         new_r_params[choice] = choice_model_params[choice] * r
-                    if choice == "Price" or choice == "Distance" or choice == "Deadhead":
-                        new_r_params[choice] = new_r_params[choice] / 100
                 n_accepts, empty_miles_all, single_loads, bundled_loads, all_lead_times, n_rejects, n_bundles, single_probs, bundled_probs, all_probs, all_sum_probs, costs, p_m = [], [], [], [], [], [], [], [], [], [], [], [], []
                 accepted_b_lens, price_percentiles, interm_price_percentiles = [], [], []
                 for j in range(num_runs):
@@ -625,9 +625,6 @@ def run_and_plot(bundle_gen_ops, pricing_algs, num_loads, carriers_ratio, choice
                         plt.xticks(rotation=90)
                         plt.show()
 
-                # print("all accepted loads", np.array(price_percentiles).mean(axis = 0))
-                # print("inter market", np.array(interm_price_percentiles).mean(axis = 0))
-
                 nbr_single = mean(single_loads)
                 nbr_bundled = mean(bundled_loads)
                 mean_prob.append(mean(all_probs))
@@ -651,7 +648,7 @@ def run_and_plot(bundle_gen_ops, pricing_algs, num_loads, carriers_ratio, choice
                 all_empty_miles.append(mean(empty_miles_all))
                 labels.append("%s - %s - %.2f" % (bundle_gen_ops[i], pricing_algs[p], ratio[s] * 100))
 
-    p_ratios, x_ratios, c_ratios, xlabels = get_labels_colors(len(pricing_algs), ratio)
+    p_ratios, x_ratios, c_ratios, xlabels = get_labels_colors(pricing_algs, ratio)
 
     if empty_and_single_bundle:
         for i in range(len(all_singles)):
@@ -673,8 +670,6 @@ def run_and_plot(bundle_gen_ops, pricing_algs, num_loads, carriers_ratio, choice
     plot_scatter(p_ratios, mean_prob, title="Average probability of acceptance", x_lab=f"Price ({', '.join(xlabels)})", y_lab="Probability of acceptance", colors=c_ratios, ratio=ratio)
 
     plot_bar(x_ratios, all_accepts, "Accepted Loads per Pricing Method", "Pricing Method", "Number of accepted loads")
-    print("Number of accepted loads for \n[" + ', '.join(xlabels) + "]")
-    print(all_accepts)
     # plot_bar(x_ratios, all_costs, "Costs (prices of accepted loads + penalty for not accepted) to platform", "Pricing Method", "Platform Cost")
     # plot_bar(x_ratios, all_p_m, "Price per mile of accepted loads", "Pricing Method", "Price per Mile of Accepted Loads")
 
